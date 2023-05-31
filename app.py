@@ -9,6 +9,18 @@ from langchain.memory import ConversationBufferMemory
 from langchain.chains import ConversationalRetrievalChain
 from htmlTemplates import css, bot_template, user_template
 from langchain.llms import HuggingFaceHub
+# for creating embeddings and inserting them into a table in SingleStore
+import sqlalchemy as db
+
+#Initialize OpenAIEmbeddings
+embedder = OpenAIEmbeddings(openai_api_key="YOUR_API_KEY")#TODO: replace with your API key
+
+#Set up connection with SingleStore first
+connection = db.create_engine(
+    "mysql+pymysql://root:password@localhost:3306/multiple_pdf_example")
+#create connection
+connection.connect()
+
 
 def get_pdf_text(pdf_docs):
     text = ""
@@ -29,13 +41,42 @@ def get_text_chunks(text):
     chunks = text_splitter.split_text(text)
     return chunks
 
-
+#this method accepts a list of text chunks and returns a vectorstore
 def get_vectorstore(text_chunks):
     embeddings = OpenAIEmbeddings()
     # embeddings = HuggingFaceInstructEmbeddings(model_name="hkunlp/instructor-xl")
     vectorstore = FAISS.from_texts(texts=text_chunks, embedding=embeddings)
     return vectorstore
 
+#function that takes a list of text chunks, creates embeddings and inserts them into a table in SingleStore
+def create_embeddings_and_insert(text_chunks):
+    # Clear the multiple_pdf_example table
+    connection.execute("TRUNCATE TABLE multiple_pdf_example")
+
+    # Iterate over the text chunks
+    for i, text in enumerate(text_chunks):
+        # Convert the text to embeddings
+        embedding = embedder.embed_documents([text])[0]
+
+        # Insert the text and its embedding into the database
+        stmt = """
+            INSERT INTO multiple_pdf_example (
+                id,
+                text,
+                embedding
+            )
+            VALUES (
+                %s,
+                %s,
+                JSON_ARRAY_PACK_F32(%s)
+            )
+        """
+
+        connection.execute(stmt, (int(i), str(text), str(embedding)))
+
+# Test the function
+#text_chunks = ["This is a test.", "This is another test."]
+#create_embeddings_and_insert(text_chunks)
 
 def get_conversation_chain(vectorstore):
     llm = ChatOpenAI()
